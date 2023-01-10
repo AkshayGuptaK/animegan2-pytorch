@@ -26,55 +26,82 @@ def load_image(image_path, x32=False):
 
     return img
 
+def select_checkpoint(model):
+    if model == 'p':
+        return 'paprika.pt'
+    if model == 'f':
+        return 'face_paint_512_v2.pt'
+    if model == 'c':
+        return 'celeba_distill.pt'
+    return None
+
+def process_image(net, image_path, output_path, device):
+    print(f"processing {image_path}")
+    if os.path.splitext(image_path)[-1].lower() not in [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]:
+        return
+            
+    image = load_image(image_path, args.x32)
+
+    with torch.no_grad():
+        image = to_tensor(image).unsqueeze(0) * 2 - 1
+        out = net(image.to(device), args.upsample_align).cpu()
+        out = out.squeeze(0).clip(-1, 1) * 0.5 + 0.5
+        out = to_pil_image(out)
+
+    out.save(output_path)
+    print(f"image saved: {output_path}")
+
+def load_checkpoint(net, checkpoint, device):
+    net.load_state_dict(torch.load(f"./weights/{checkpoint}", map_location="cpu"))
+    net.to(device).eval()
+    print(f"model loaded: {checkpoint}")    
+
+def do_conversion(net, device, model, dir, image_name):
+    checkpoint = select_checkpoint(model)
+    load_checkpoint(net, checkpoint, device)
+    image_path = os.path.join(dir, image_name)
+    [img, ext] = os.path.splitext(image_name)
+    output_path = f"{args.dir}/{img}_{model}.{ext}"
+    process_image(net, image_path, output_path, device)    
 
 def test(args):
     device = args.device
+    image_name = args.image
+    model = args.model
+    dir = args.dir
+    os.makedirs(dir, exist_ok=True)
     
     net = Generator()
-    net.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
-    net.to(device).eval()
-    print(f"model loaded: {args.checkpoint}")
-    
-    os.makedirs(args.output_dir, exist_ok=True)
 
-    for image_name in sorted(os.listdir(args.input_dir)):
-        if os.path.splitext(image_name)[-1].lower() not in [".jpg", ".png", ".bmp", ".tiff"]:
-            continue
-            
-        image = load_image(os.path.join(args.input_dir, image_name), args.x32)
-
-        with torch.no_grad():
-            image = to_tensor(image).unsqueeze(0) * 2 - 1
-            out = net(image.to(device), args.upsample_align).cpu()
-            out = out.squeeze(0).clip(-1, 1) * 0.5 + 0.5
-            out = to_pil_image(out)
-
-        out.save(os.path.join(args.output_dir, image_name))
-        print(f"image saved: {image_name}")
+    if model == 'all':
+        for mode in ['c', 'f', 'p']:
+            do_conversion(net, device, mode, dir, image_name)
+    else:    
+        do_conversion(net, device, model, dir, image_name)
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--checkpoint',
+        '--model',
         type=str,
-        default='./weights/paprika.pt',
+        default='all',
     )
     parser.add_argument(
-        '--input_dir', 
+        '--image', 
+        type=str, 
+        default='1.jpg',
+    )
+    parser.add_argument(
+        '--dir', 
         type=str, 
         default='./samples/inputs',
     )
     parser.add_argument(
-        '--output_dir', 
-        type=str, 
-        default='./samples/results',
-    )
-    parser.add_argument(
         '--device',
         type=str,
-        default='cuda:0',
+        default='cpu',
     )
     parser.add_argument(
         '--upsample_align',
